@@ -1,0 +1,37 @@
+http://192.168.1.130:3030/predict_using_datetime?year=2014&month=8&day=22&hour=15&minute=23&second=00
+
+Quick Notes
+1) all_rnn.py -> output: model, scaler, parameters to initiate model,,//performance?
+
+
+Problem: How to set up a Predict_API that could allow historical backtesting and live trading easily?
+
+Solution 1: Predict_API predict using datetime
+1) ninja sends datetime, Predict_API return signal using internal database set up somewhere (MySQL etc or just plain csv file)
+Good:
+  Ninja don't have to load 40+ assets.
+  Good for Historical Backtesting
+Bad:
+  Future information leak may occur (coding error etc., because the internal database is pre-processed beforehand)
+  Database hard to update. Updating database LIVE (bars by bars) is not practical, because updating and loading the database is very slow
+  Bad for Live Trading
+
+Solution 2: Predict_API predict using data (on the go)
+1) ninja sends data to Predict_API and Predict_API pre-process data + predict from model
+Good:
+  No potential future information leaked to model
+  Good for Backtesting and Live Trading as well
+Bad:
+  Ninjatrader cannot load 40+ assets at the same time.
+  Inconvenient to set up ninjatrader code to send 40+ assets data + "SEQ_LEN" histories (e.g. 60 bars per asset)
+
+Solution 3: Predict_API predict using datetime
+1) Get a data api from a data vendor, e.g. Barchart (minutes data, potentially very expensive)
+2) ninja sends datetime, Predict_API query the needed data from "Barchart", pre-process and predict on the go
+
+Good:
+  Good for Backtesting and Live Trading as well
+  Flexible too, potentially allow to query other sources of data (e.g. economics data)
+Bad:
+  Minutes data can be expensive
+  Number of queries can be a lot (data vendor may have limits)

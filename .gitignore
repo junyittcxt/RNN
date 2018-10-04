@@ -60,3 +60,13 @@ target/
 logs/
 
 models/
+
+\.ipynb_checkpoints/
+
+RUNS/
+
+DATA/
+
+NTData/
+
+Sample_Data/
