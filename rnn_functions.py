@@ -10,6 +10,22 @@ import os
 
 from sklearn.metrics import confusion_matrix
 
+import keras.backend as K
+
+def precision(y_true, y_pred):
+    """Precision metric.
+
+    Only computes a batch-wise average of precision.
+
+    Computes the precision, a metric for multi-label classification of
+    how many selected items are relevant.
+    """
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
+    precision = true_positives / (predicted_positives + K.epsilon())
+    return precision
+
+
 def cumulative_returns(returns):
     return np.prod(1+np.array(returns)) - 1
 
@@ -134,7 +150,7 @@ def split_df_by_prop(df, prop = []):
         df_list = np.split(df, T, axis = 0)
         return df_list
 
-def preprocess_returns_df(df, target_col, SEQ_LEN, scaler = None, fit = True, same_prop = True):
+def preprocess_returns_df(df, target_col, SEQ_LEN, scaler = None, fit = True, same_prop = True, shuffle = False):
     x_columns = [c for c in df.columns if c != target_col]
     if scaler is not None:
         if fit:
@@ -142,16 +158,16 @@ def preprocess_returns_df(df, target_col, SEQ_LEN, scaler = None, fit = True, sa
         df[x_columns] = scaler.transform(df[x_columns].values)
 
     sequential_data = []
-    # prev_days = deque(maxlen = SEQ_LEN)
-    prev_days = []
+    prev_days = deque(maxlen = SEQ_LEN)
+    # prev_days = []
 
     for i in df.values:
         prev_days.append([n for n in i[:-1]])
         if len(prev_days) == SEQ_LEN:
             sequential_data.append([np.array(prev_days), i[-1]])
-            prev_days = []
-
-    random.shuffle(sequential_data)
+            # prev_days = []
+    if shuffle:
+        random.shuffle(sequential_data)
 
     if same_prop:
         buys = []
@@ -233,11 +249,13 @@ def init_dir(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOCHS, NAME, logs_folder = None, models_folder=None, device_name = "/gpu:1"):
+def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOCHS, NAME, PATIENCE = None, logs_folder = None, models_folder=None, device_name = "/gpu:1"):
     if logs_folder is None:
         logs_folder = NAME
     if models_folder is None:
         models_folder = NAME
+    if PATIENCE is None:
+        PATIENCE = np.round(EPOCHS/3)
 
     train_x, train_y, val_x, val_y = data
     tf.reset_default_graph()
@@ -249,37 +267,19 @@ def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOC
         model.add(Dropout(DROPOUT))
         model.add(BatchNormalization())
 
-        model.add(CuDNNLSTM(NEURONS, input_shape=(train_x.shape[1:]), return_sequences = True))
-        model.add(Dropout(DROPOUT))
-        model.add(BatchNormalization())
-
-
-        model.add(CuDNNLSTM(NEURONS, input_shape=(train_x.shape[1:]), return_sequences = True))
-        model.add(Dropout(DROPOUT))
-        model.add(BatchNormalization())
-
-        model.add(CuDNNLSTM(NEURONS, input_shape=(train_x.shape[1:]), return_sequences = True))
-        # model.add(LSTM(NEURONS, input_shape=(train_x.shape[1:]), return_sequences = True))
-        model.add(Dropout(DROPOUT))
-        model.add(BatchNormalization())
-
-        model.add(CuDNNLSTM(NEURONS, input_shape=(train_x.shape[1:]), return_sequences = True))
-        # model.add(LSTM(NEURONS, input_shape=(train_x.shape[1:]), return_sequences = True))
-        model.add(Dropout(DROPOUT))
-        model.add(BatchNormalization())
-
         model.add(CuDNNLSTM(NEURONS, input_shape=(train_x.shape[1:])))
-        # model.add(LSTM(NEURONS, input_shape=(train_x.shape[1:])))
         model.add(Dropout(DROPOUT))
         model.add(BatchNormalization())
 
-        model.add(Dense(np.round(NEURONS/2,0), activation = "relu"))
-        model.add(Dense(2, activation = "softmax"))
+        # model.add(Dense(np.round(NEURONS/2,0), activation = "relu"))
+        model.add(Dense(1, activation = "sigmoid"))
 
         opt = tf.keras.optimizers.Adam(lr = LEARNING_RATE, decay = 1e-6)
-        model.compile(loss='sparse_categorical_crossentropy',
+        model.compile(
+                      # loss='sparse_categorical_crossentropy',
+                      loss='binary_crossentropy',
                       optimizer=opt,
-                      metrics=['accuracy']
+                      metrics=['accuracy', precision]
                       )
 
         logs_dir = f'logs/{logs_folder}'
@@ -287,20 +287,20 @@ def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOC
 
         tensorboard = TensorBoard(log_dir=f'{logs_dir}/{NAME}')
 
-        filepath = "RNN_Final-{epoch:03d}-{val_acc:.3f}"
+        filepath = "RNN_Final-{epoch:03d}-{val_loss:.4f}-{val_acc:.4f}"
         models_dir = f'models/{models_folder}/{NAME}'
         init_dir(models_dir)
         checkpoint = tf.keras.callbacks.ModelCheckpoint("{}/{}.model".format(models_dir, filepath),
-                                                           monitor='val_acc',
+                                                           monitor='val_loss',
                                                            verbose=1,
                                                            save_best_only=True,
                                                            save_weights_only=False,
-                                                           mode='max')
-
+                                                           mode='min')
+        earlystopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=PATIENCE, verbose=0, mode='min')
         history = model.fit(train_x, train_y,
                             batch_size=BATCH_SIZE,
                             epochs=EPOCHS,
                             validation_data=(val_x, val_y),
-                            callbacks=[tensorboard, checkpoint])
+                            callbacks=[tensorboard, checkpoint, earlystopping])
 
     return model, history
