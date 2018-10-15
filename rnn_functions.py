@@ -63,6 +63,14 @@ def performance_binary(x, y, model, sample_type = "Sample", threshold = 0.5, sil
 
     return performance_dict
 
+def filter_off_trading_day(df, target, threshold = 0.1):
+    df["hh"] = df.index.hour
+    df["mm"] = df.index.minute
+    df["ss"] = df.index.second
+    df["wkday"] = df.index.weekday
+    df = df.groupby(["hh", "mm", "ss", "wkday"]).filter(lambda x: np.mean(x[target]!=0) > threshold)
+    return df
+
 def create_target(df, target_col, FUTURE_PERIOD_PREDICT, FUNC = cumulative_returns):
     df['target'] = df[target_col].rolling(window = FUTURE_PERIOD_PREDICT).apply(lambda x: FUNC(x))
     df['target'] = df['target'].shift(-FUTURE_PERIOD_PREDICT)
@@ -251,9 +259,10 @@ def init_dir(directory):
 
 def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOCHS, NAME, PATIENCE = None, logs_folder = None, models_folder=None, device_name = "/gpu:1"):
     if logs_folder is None:
-        logs_folder = NAME
+        # logs_folder = NAME
+        raise Exception("No Logs Folder")
     if models_folder is None:
-        models_folder = NAME
+        raise Exception("No Models Folder")
     if PATIENCE is None:
         PATIENCE = np.round(EPOCHS/3)
 
@@ -263,13 +272,13 @@ def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOC
     with tf.device(device_name):
         model = Sequential()
 
-        model.add(CuDNNLSTM(NEURONS, input_shape=(train_x.shape[1:]), return_sequences = True))
-        model.add(Dropout(DROPOUT))
-        model.add(BatchNormalization())
+        # model.add(CuDNNLSTM(NEURONS, input_shape=(train_x.shape[1:]), return_sequences = True))
+        # model.add(Dropout(DROPOUT))
+        # model.add(BatchNormalization())
 
         model.add(CuDNNLSTM(NEURONS, input_shape=(train_x.shape[1:])))
         model.add(Dropout(DROPOUT))
-        model.add(BatchNormalization())
+        # model.add(BatchNormalization())
 
         # model.add(Dense(np.round(NEURONS/2,0), activation = "relu"))
         model.add(Dense(1, activation = "sigmoid"))
@@ -282,14 +291,14 @@ def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOC
                       metrics=['accuracy', precision]
                       )
 
-        logs_dir = f'logs/{logs_folder}'
-        init_dir(logs_dir)
+        # logs_dir = f'logs/{logs_folder}'
+        # init_dir(logs_dir)
 
-        tensorboard = TensorBoard(log_dir=f'{logs_dir}/{NAME}')
+        tensorboard = TensorBoard(log_dir=logs_folder)
 
         filepath = "RNN_Final-{epoch:03d}-{val_loss:.4f}-{val_acc:.4f}"
-        models_dir = f'models/{models_folder}/{NAME}'
-        init_dir(models_dir)
+        models_dir = models_folder
+        # init_dir(models_dir)
         checkpoint = tf.keras.callbacks.ModelCheckpoint("{}/{}.model".format(models_dir, filepath),
                                                            monitor='val_loss',
                                                            verbose=1,
