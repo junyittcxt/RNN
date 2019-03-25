@@ -169,13 +169,13 @@ def preprocess_returns_df(df, target_col, SEQ_LEN, scaler = None, fit = True, sa
     prev_days = deque(maxlen = SEQ_LEN)
     # prev_days = []
 
-    for i in df.values:
+    timestamp = []
+    for i, j in zip(df.values, df.index):
         prev_days.append([n for n in i[:-1]])
         if len(prev_days) == SEQ_LEN:
             sequential_data.append([np.array(prev_days), i[-1]])
+            timestamp.append(j)
             # prev_days = []
-    if shuffle:
-        random.shuffle(sequential_data)
 
     if same_prop:
         buys = []
@@ -192,6 +192,60 @@ def preprocess_returns_df(df, target_col, SEQ_LEN, scaler = None, fit = True, sa
         sells = sells[:lower]
         sequential_data = buys + sells
 
+    if shuffle:
+        random.shuffle(sequential_data)
+    X = []
+    y = []
+
+    for seq, target in sequential_data:
+        X.append(seq)
+        y.append(target)
+    num_example = len(X)
+    num_features = len(x_columns)
+    return np.array(X), np.array(y), scaler, x_columns, num_example, num_features
+
+def reshape2(x):
+    s = [j for j in x.shape]
+    x2 = x.reshape(s[0],s[1],s[2],1)
+
+    return x2, s
+
+def preprocess_returns_df_cnn(df, target_col, SEQ_LEN, scaler = None, fit = True, same_prop = True, shuffle = False):
+    x_columns = [c for c in df.columns if c != target_col]
+    if scaler is not None:
+        if fit:
+            scaler.fit(df[x_columns].values)
+        df.loc[:,x_columns] = scaler.transform(df[x_columns].values)
+
+    sequential_data = []
+    prev_days = deque(maxlen = SEQ_LEN)
+    # prev_days = []
+
+    timestamp = []
+    for i, j in zip(df.values, df.index):
+        prev_days.append([n for n in i[:-1]])
+        if len(prev_days) == SEQ_LEN:
+            sequential_data.append([np.array(prev_days), i[-1]])
+            timestamp.append(j)
+            # prev_days = []
+
+    if same_prop:
+        buys = []
+        sells = []
+
+        for seq, target in sequential_data:
+            if target == 0:
+                sells.append([seq, target])
+            elif target == 1:
+                buys.append([seq, target])
+
+        lower = min(len(buys), len(sells))
+        buys = buys[:lower]
+        sells = sells[:lower]
+        sequential_data = buys + sells
+
+    if shuffle:
+        random.shuffle(sequential_data)
     X = []
     y = []
 
@@ -199,7 +253,9 @@ def preprocess_returns_df(df, target_col, SEQ_LEN, scaler = None, fit = True, sa
         X.append(seq)
         y.append(target)
 
-    return np.array(X), np.array(y), scaler, x_columns
+    x_cnn, x_shape = reshape2(np.array(X))
+
+    return x_cnn, np.array(y), timestamp, scaler, x_columns, x_shape
 
 def preprocess_df(df, scaler, SEQ_LEN, fit = True, same_prop = False):
     df = df.drop('future', 1)
@@ -257,7 +313,7 @@ def init_dir(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOCHS, NAME, PATIENCE = None, logs_folder = None, models_folder=None, device_name = "/gpu:1"):
+def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOCHS, NAME, PATIENCE = None, logs_folder = None, models_folder=None, device_name = "/gpu:0"):
     if logs_folder is None:
         # logs_folder = NAME
         raise Exception("No Logs Folder")
@@ -311,5 +367,65 @@ def cudnn_lstm(data, NUMLAYER, NEURONS, DROPOUT, LEARNING_RATE, BATCH_SIZE, EPOC
                             epochs=EPOCHS,
                             validation_data=(val_x, val_y),
                             callbacks=[tensorboard, checkpoint, earlystopping])
+
+    return model, history
+
+def cudnn_lstm_tf_data(dataset_train, dataset_val, DATA_PARAMS, MODEL_PARAMS, logs_folder = None, models_folder=None):
+    NUMLAYER = MODEL_PARAMS["NUMLAYER"]
+    NUMUNITS = MODEL_PARAMS["NUMUNITS"]
+    DROPOUT = MODEL_PARAMS["DROPOUT"]
+    LEARNING_RATE = MODEL_PARAMS["LEARNING_RATE"]
+    BATCH_SIZE = MODEL_PARAMS["BATCH_SIZE"]
+    EPOCHS = MODEL_PARAMS["EPOCHS"]
+    NAME = MODEL_PARAMS["NAME"]
+    PATIENCE = MODEL_PARAMS["PATIENCE"]
+    device_name = "/gpu:0" #+ MODEL_PARAMS["GPU"]
+
+    NUM_FEATURES = DATA_PARAMS["num_features_train"]
+    SEQ_LEN = DATA_PARAMS["SEQ_LEN"]
+    training_steps = int(np.ceil(DATA_PARAMS["num_example_train"]/BATCH_SIZE))
+    val_steps = int(np.ceil(DATA_PARAMS["num_example_val"]/BATCH_SIZE))
+
+    if logs_folder is None:
+        # logs_folder = NAME
+        raise Exception("No Logs Folder")
+    if models_folder is None:
+        raise Exception("No Models Folder")
+    if PATIENCE is None:
+        PATIENCE = np.round(EPOCHS/3)
+
+    tf.reset_default_graph()
+
+    with tf.device(device_name):
+        model = Sequential()
+        # model.add(CuDNNLSTM(NUMUNITS, input_shape=(train_x.shape[1:])))
+        model.add(CuDNNLSTM(NUMUNITS, input_shape=(NUM_FEATURES, SEQ_LEN)))
+        model.add(Dropout(DROPOUT))
+        model.add(Dense(1, activation = "sigmoid"))
+        opt = tf.keras.optimizers.Adam(lr = LEARNING_RATE, decay = 1e-6)
+        model.compile(
+                      loss='binary_crossentropy',
+                      optimizer=opt,
+                      metrics=['accuracy', precision]
+                      )
+        tensorboard = TensorBoard(log_dir=logs_folder)
+        filepath = "RNN_Final-{epoch:03d}-{val_loss:.4f}-{val_acc:.4f}"
+        models_dir = models_folder
+        checkpoint = tf.keras.callbacks.ModelCheckpoint("{}/{}.model".format(models_dir, filepath),
+                                                           monitor='val_loss',
+                                                           verbose=1,
+                                                           save_best_only=True,
+                                                           save_weights_only=False,
+                                                           mode='min')
+        earlystopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=PATIENCE, verbose=0, mode='min')
+        # history = model.fit(dataset_train.make_one_shot_iterator(),
+        history = model.fit(dataset_train.make_one_shot_iterator(),
+                            steps_per_epoch=training_steps,
+                            # batch_size=BATCH_SIZE,
+                            epochs=EPOCHS,
+                            validation_data=dataset_val.make_one_shot_iterator(),
+                            validation_steps=val_steps,
+                            callbacks=[tensorboard, checkpoint, earlystopping],
+                            verbose=1)
 
     return model, history

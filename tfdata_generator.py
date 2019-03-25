@@ -1,3 +1,5 @@
+import numpy as np
+
 """An example of how to use tf.Dataset in Keras Model"""
 import tensorflow as tf   # only work from tensorflow==1.9.0-rc1 and after
 
@@ -79,3 +81,33 @@ def keras_model():
 
 if __name__ == '__main__':
     training_pipeline()
+
+#
+#
+#
+# def np_memmap():
+#     return
+#
+# def tfdata_generator(x, y, is_training, batch_size=128):
+#     '''Construct a data generator using tf.Dataset'''
+#
+#     def preprocess_fn(x, y):
+#         '''A transformation function to preprocess raw data
+#         into trainable input. '''
+#         x = tf.reshape(tf.cast(x, tf.float32), (28, 28, 1))
+#         y = tf.one_hot(tf.cast(y, tf.uint8), _NUM_CLASSES)
+#         return x, y
+#
+#     dataset = tf.data.Dataset.from_tensor_slices((x, y))
+#     if is_training:
+#         dataset = dataset.shuffle(1000)  # depends on sample size
+#
+#     # Transform and batch data at the same time
+#     dataset = dataset.apply(tf.contrib.data.map_and_batch(
+#         preprocess_fn, batch_size,
+#         num_parallel_batches=4,  # cpu cores
+#         drop_remainder=True if is_training else False))
+#     dataset = dataset.repeat()
+#     dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
+#
+#     return dataset
